@@ -1,66 +1,47 @@
 // api/roof.js
-const { Router } = require("itty-router");
-const fetch = require("node-fetch");
-const router = Router();
+import fetch from "node-fetch";
 
-// CORS preflight
-router.options("/*", () => {
-  return new Response(null, {
-    status: 204,
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "POST,OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
-    },
-  });
-});
+export default async function handler(req, res) {
+  // 1) CORS headers
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-// Reject any GET (or other) method immediately so the function doesn’t hang
-router.get("/*", () => {
-  return new Response(JSON.stringify({ error: "Method Not Allowed" }), {
-    status: 405,
-    headers: {
-      "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
-    },
-  });
-});
-
-// Handle the actual POST
-router.post("/*", async (req) => {
-  let { file } = await req.json().catch(() => ({}));
-  if (!file) {
-    return new Response(JSON.stringify({ error: "No file provided" }), {
-      status: 400,
-      headers: {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
-      },
-    });
+  // 2) Preflight
+  if (req.method === "OPTIONS") {
+    return res.status(204).end();
   }
 
-  // Proxy to Roboflow
-  const form = new URLSearchParams();
-  form.append("api_key", "pRL438ACs41EvkUgU6zf");
-  form.append("file", file);
+  // 3) Only POST allowed
+  if (req.method !== "POST") {
+    res.setHeader("Allow", "POST,OPTIONS");
+    return res.status(405).send("Method Not Allowed");
+  }
 
-  const rfRes = await fetch(
-    "https://outline.roboflow.com/roof-detection-vector-view/2",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: form.toString(),
-    }
-  );
+  try {
+    // 4) Read the raw urlencoded body
+    let body = "";
+    await new Promise((resolve, reject) => {
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", resolve);
+      req.on("error", reject);
+    });
 
-  const txt = await rfRes.text();
-  return new Response(txt, {
-    status: rfRes.status,
-    headers: {
-      "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
-    },
-  });
-});
+    // 5) Forward to Roboflow
+    const rfRes = await fetch(
+      "https://serverless.roboflow.com/roof-detection-vector-view/2",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+      }
+    );
 
-module.exports = (req, res) => router.handle(req, res);
+    // 6) Relay status and body back verbatim
+    const text = await rfRes.text();
+    res.status(rfRes.status).send(text);
+  } catch (err) {
+    console.error("❌ proxy error:", err);
+    res.status(500).json({ error: err.message });
+  }
+}

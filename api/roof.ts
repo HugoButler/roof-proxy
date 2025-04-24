@@ -1,8 +1,8 @@
-// api/roof.ts
-export const config = { runtime: "edge" }
+// File: api/roof.ts
+export const config = { runtime: "edge" };
 
 export default async function handler(req: Request) {
-  // CORS preflight
+  // 1) CORS preflight
   if (req.method === "OPTIONS") {
     return new Response(null, {
       status: 204,
@@ -11,38 +11,37 @@ export default async function handler(req: Request) {
         "Access-Control-Allow-Methods": "POST,OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type",
       },
-    })
+    });
   }
 
-  // Only allow POST
+  // 2) Only POST allowed
   if (req.method !== "POST") {
-    return new Response("Method Not Allowed", { status: 405 })
+    return new Response("Method Not Allowed", { status: 405 });
   }
 
-  // Parse incoming JSON body { image: URL_or_base64 }
-  let image: string
+  // 3) Parse JSON body { image: "<URL or base64>" }
+  let image: string;
   try {
-    const { image: img } = await req.json()
-    image = img
+    const payload = await req.json();
+    image = payload.image;
   } catch {
     return new Response(
-      JSON.stringify({ error: "Invalid JSON body; expected { image }" }),
+      JSON.stringify({ error: "Invalid JSON; expected { image }" }),
       { status: 400, headers: { "Content-Type": "application/json" } }
-    )
+    );
   }
   if (!image) {
     return new Response(
       JSON.stringify({ error: "Missing `image` field" }),
       { status: 400, headers: { "Content-Type": "application/json" } }
-    )
+    );
   }
 
-  // Build form for Roboflow
-  const form = new URLSearchParams()
-  form.append("api_key", "pRL438ACs41EvkUgU6zf")
-  form.append("image",   image)
+  // 4) Proxy to Roboflow
+  const form = new URLSearchParams();
+  form.append("api_key", "pRL438ACs41EvkUgU6zf");
+  form.append("image",   image);
 
-  // Call Roboflow’s serverless endpoint
   const rf = await fetch(
     "https://serverless.roboflow.com/roof-detection-vector-view/2",
     {
@@ -50,17 +49,17 @@ export default async function handler(req: Request) {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body:    form.toString(),
     }
-  )
+  );
 
-  const payload = await rf.text()
-  const ct      = rf.headers.get("content-type") || "application/json"
+  const body = await rf.text();
+  const ct   = rf.headers.get("content-type") || "application/json";
 
-  // Return their response, passing CORS
-  return new Response(payload, {
+  // 5) Return Roboflow’s response with CORS
+  return new Response(body, {
     status: rf.status,
     headers: {
       "Content-Type":                ct,
       "Access-Control-Allow-Origin": "*",
     },
-  })
+  });
 }

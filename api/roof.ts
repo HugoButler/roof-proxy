@@ -1,55 +1,64 @@
-// File: /api/roof.ts
+// File: api/roof.ts
+// Tell Vercel to run this as an Edge Function
 export const config = { runtime: "edge" };
 
-const API_KEY = "pRL438ACs41EvkUgU6zf";
-const ROBOFLOW_URL =
-  "https://serverless.roboflow.com/roof-detection-vector-view/2";
-
-const CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST,OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
-};
-
-export default async function handler(req: Request): Promise<Response> {
+export default async function handler(req: Request) {
+  // 1) Preflight
   if (req.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: CORS });
-  }
-  if (req.method !== "POST") {
-    return new Response("Not found", { status: 404 });
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST,OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
   }
 
-  // parse JSON or form body
-  let image: string | null = null;
-  const ct = req.headers.get("content-type") || "";
-  if (ct.includes("application/json")) {
-    const j = await req.json().catch(() => null);
-    image = j?.image || null;
-  } else {
-    const t = await req.text();
-    const params = new URLSearchParams(t);
-    image = params.get("image");
+  // 2) Only POST
+  if (req.method !== "POST") {
+    return new Response("Method Not Allowed", { status: 405 });
   }
-  if (!image) {
+
+  // 3) Parse JSON
+  let image: string;
+  try {
+    const data = await req.json();
+    image = data.image;
+    if (!image) throw new Error("No image field");
+  } catch (err) {
     return new Response(
-      JSON.stringify({ error: "Invalid payload; expected { image }" }),
-      { status: 400, headers: { ...CORS, "Content-Type": "application/json" } }
+      JSON.stringify({ error: "Invalid JSON; expected { image }" }),
+      {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      }
     );
   }
 
-  // forward to Roboflow
+  // 4) Build form body
   const form = new URLSearchParams();
-  form.set("api_key", API_KEY);
-  form.set("image", image);
-  const rf = await fetch(ROBOFLOW_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: form.toString(),
-  });
+  form.append("api_key", "pRL438ACs41EvkUgU6zf");  // <- your private key
+  form.append("image", image);
+
+  // 5) Proxy to Roboflow
+  const rf = await fetch(
+    "https://serverless.roboflow.com/roof-detection-vector-view/2",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: form.toString(),
+    }
+  );
 
   const text = await rf.text();
+
+  // 6) Return Roboflow’s response
   return new Response(text, {
     status: rf.status,
-    headers: { ...CORS, "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+    },
   });
 }

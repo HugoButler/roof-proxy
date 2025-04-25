@@ -1,64 +1,76 @@
 // File: /api/roof.ts
 export const config = { runtime: "edge" };
 
-import { Router } from "itty-router";
-const router = Router();
+const API_KEY = "pRL438ACs41EvkUgU6zf";
+const ROBOFLOW_URL =
+  "https://serverless.roboflow.com/roof-detection-vector-view/2";
 
-// Preflight
-router.options("/*", () => {
-  return new Response(null, {
-    status: 204,
-    headers: {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "POST,OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
-    },
-  });
-});
+// universal CORS header set
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST,OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
 
-// Inference endpoint
-router.post("/*", async (req) => {
-  let image: string;
+// Edge function entrypoint
+export default async function handler(req: Request): Promise<Response> {
+  // 1) Preflight
+  if (req.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: CORS_HEADERS,
+    });
+  }
 
-  const ct = req.headers.get("Content-Type") || "";
+  // 2) Only POST allowed
+  if (req.method !== "POST") {
+    return new Response("Not found", { status: 404 });
+  }
+
+  // 3) Parse incoming image (JSON or form-urlencoded)
+  let imageUrl: string | null = null;
+  const ct = req.headers.get("content-type") || "";
+
   if (ct.includes("application/json")) {
-    // JSON body: { image: "…" }
-    const { image: img } = await req.json();
-    image = img;
+    const body = await req.json().catch(() => null);
+    imageUrl = body?.image ?? null;
   } else if (ct.includes("application/x-www-form-urlencoded")) {
-    // form body: api_key=…&image=…
-    const formText = await req.text();
-    const params = new URLSearchParams(formText);
-    image = params.get("image") || "";
-  } else {
+    const text = await req.text();
+    const params = new URLSearchParams(text);
+    imageUrl = params.get("image");
+  }
+
+  if (!imageUrl) {
     return new Response(
-      JSON.stringify({ error: "Unsupported Content-Type" }),
-      { status: 415, headers: { "Content-Type": "application/json" } }
+      JSON.stringify({ error: "Invalid payload; expected { image }" }),
+      {
+        status: 400,
+        headers: {
+          ...CORS_HEADERS,
+          "Content-Type": "application/json",
+        },
+      }
     );
   }
 
-  // build form for Roboflow
+  // 4) Forward to Roboflow
   const form = new URLSearchParams();
-  form.append("api_key", "pRL438ACs41EvkUgU6zf");
-  form.append("image", image);
+  form.append("api_key", API_KEY);
+  form.append("image", imageUrl);
 
-  const rfRes = await fetch(
-    "https://outline.roboflow.com/roof-detection-vector-view/2",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: form.toString(),
-    }
-  );
+  const rfRes = await fetch(ROBOFLOW_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: form.toString(),
+  });
 
-  const text = await rfRes.text();
-  return new Response(text, {
+  // 5) Proxy the response back
+  const payload = await rfRes.text(); // text because Roboflow sometimes returns HTML on error
+  return new Response(payload, {
     status: rfRes.status,
     headers: {
+      ...CORS_HEADERS,
       "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
     },
   });
-});
-
-export default (req: Request) => router.handle(req);
+}

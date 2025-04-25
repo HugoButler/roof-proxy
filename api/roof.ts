@@ -1,76 +1,82 @@
-// File: /api/roof.ts
+// Tell Vercel to run this on the Edge runtime
 export const config = { runtime: "edge" };
 
-// your Vercel domain:
-const ALLOWED_ORIGIN = "https://roof-proxy-hw3z.vercel.app";
+import { Router } from "itty-router";
 
-const CORS_HEADERS = {
-  "Access-Control-Allow-Origin" : ALLOWED_ORIGIN,
-  "Access-Control-Allow-Methods": "POST,OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
-};
+// Roboflow private key (keep secret, never expose client‐side)
+const ROBOFLOW_KEY = "pRL438ACs41EvkUgU6zf";
 
-export default async (req: Request): Promise<Response> => {
-  // 1) CORS preflight
-  if (req.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: CORS_HEADERS });
-  }
-  if (req.method !== "POST") {
-    return new Response("Method Not Allowed", {
-      status: 405,
-      headers: CORS_HEADERS,
-    });
-  }
+// Create our router
+const router = Router();
 
-  // 2) parse JSON body
-  let payload: any;
+// 1️⃣ Preflight for CORS
+router.options("/*", () =>
+  new Response(null, {
+    status: 204,
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    },
+  })
+);
+
+// 2️⃣ POST inference
+router.post("/*", async (req) => {
+  // expect JSON body: { image: "<url-or-base64>" }
+  let json: { image?: string };
   try {
-    payload = await req.json();
-  } catch {
+    json = await req.json();
+  } catch (err) {
     return new Response(
       JSON.stringify({ error: "Invalid JSON; expected { image }" }),
-      { status: 400, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
+      { status: 400, headers: { "Content-Type": "application/json" } }
     );
   }
 
-  const { image } = payload;
+  const image = json.image;
   if (!image) {
     return new Response(
-      JSON.stringify({ error: "Missing `image` field" }),
-      { status: 400, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
+      JSON.stringify({ error: "Missing `image` in request body" }),
+      { status: 400, headers: { "Content-Type": "application/json" } }
     );
   }
 
-  // 3) build form for Roboflow
+  // build form body
   const form = new URLSearchParams();
-  form.append("api_key", Deno.env.get("ROBOFLOW_API_KEY")!);
-  if (/^https?:\/\//i.test(image)) {
-    form.append("image_url", image);
-  } else {
-    form.append("image", image);
-  }
+  form.append("api_key", ROBOFLOW_KEY);
+  form.append("image", image);
 
-  // 4) proxy the request
-  let upstream: Response;
+  // call Roboflow
+  let rfRes: Response;
   try {
-    upstream = await fetch(
-      `https://serverless.roboflow.com/roof-detection-vector-view/2`,
+    rfRes = await fetch(
+      "https://serverless.roboflow.com/roof-detection-vector-view/2",
       {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: form.toString(),
       }
     );
-  } catch (err: any) {
+  } catch (err) {
     return new Response(
-      JSON.stringify({ error: "Upstream fetch failed", detail: err.message }),
-      { status: 502, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } }
+      JSON.stringify({ error: "Failed to reach Roboflow", details: err }),
+      { status: 502, headers: { "Content-Type": "application/json" } }
     );
   }
 
-  const body = await upstream.text();
-  return new Response(body, {
-    status: upstream.status,
-    headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+  const text = await rfRes.text();
+  // proxy back status + body
+  return new Response(text, {
+    status: rfRes.status,
+    headers: {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+    },
   });
-};
+});
+
+// 404 for everything else
+router.all("*", () => new Response("Not found", { status: 404 }));
+
+export default router;

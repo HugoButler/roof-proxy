@@ -1,0 +1,12 @@
+{
+  "name": "roof-proxy",
+  "version": "1.0.0",
+  "scripts": {
+    // Vercel doesn’t need this, but if you ever run locally:
+    "start": "vercel dev"
+  },
+  "dependencies": {
+    "itty-router": "^3.1.0",
+    "node-fetch": "^2.6.7"
+  }
+}
